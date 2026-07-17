@@ -1061,6 +1061,29 @@ html[data-theme="light"] .theme-switch::after{transform:translateX(16px);}
   </div>
 </div>
 
+<!-- Auth modal -->
+<div class="modal-overlay" id="authModalOverlay">
+  <div class="modal">
+    <h3 id="authModalTitle">Sign in</h3>
+    <p id="authModalSubtitle">Connect your account to sync chats with the backend.</p>
+    <div id="authNameRow" style="display:none; margin-bottom:10px;">
+      <input type="text" id="authNameInput" placeholder="Your name" style="width:100%;padding:10px 12px;border-radius:10px;background:var(--bg-elevated-2);border:1px solid var(--border);color:var(--text-primary);font-size:13.5px;font-family:inherit;">
+    </div>
+    <div style="display:grid;gap:10px;">
+      <input type="email" id="authEmailInput" placeholder="Email" style="width:100%;padding:10px 12px;border-radius:10px;background:var(--bg-elevated-2);border:1px solid var(--border);color:var(--text-primary);font-size:13.5px;font-family:inherit;">
+      <input type="password" id="authPasswordInput" placeholder="Password" style="width:100%;padding:10px 12px;border-radius:10px;background:var(--bg-elevated-2);border:1px solid var(--border);color:var(--text-primary);font-size:13.5px;font-family:inherit;">
+    </div>
+    <div id="authMessage" style="min-height:18px;margin-top:10px;font-size:13px;color:var(--text-secondary);"></div>
+    <div class="modal-actions" style="margin-top:12px;">
+      <button class="modal-btn ghost" id="authCancelBtn">Cancel</button>
+      <button class="modal-btn primary" id="authSubmitBtn">Sign in</button>
+    </div>
+    <div style="text-align:center;margin-top:10px;">
+      <button class="modal-btn ghost" id="authModeToggleBtn" style="font-size:13px;padding:8px 10px;">Create an account</button>
+    </div>
+  </div>
+</div>
+
 <!-- Settings modal -->
 <div class="modal-overlay" id="settingsModalOverlay">
   <div class="modal">
@@ -1109,8 +1132,9 @@ html[data-theme="light"] .theme-switch::after{transform:translateX(16px);}
      ============================================================ */
   const CONFIG = {
     APP_NAME: 'AI Content Assistant',
-    // Backend team: point this at the real FastAPI base URL.
-    API_BASE_URL: 'https://your-fastapi-backend.example.com/api',
+    API_BASE_URL: window.location.protocol === 'file:'
+      ? 'http://127.0.0.1:8000/api'
+      : 'http://127.0.0.1:8000/api',
     ENDPOINTS: {
       SEND_MESSAGE: '/chat/send',
       CREATE_CHAT: '/chat/create',
@@ -1118,13 +1142,20 @@ html[data-theme="light"] .theme-switch::after{transform:translateX(16px);}
       DELETE_CHAT: '/chat/delete',
       RENAME_CHAT: '/chat/rename'
     },
+    AUTH_ENDPOINTS: {
+      LOGIN: '/auth/login',
+      REGISTER: '/auth/register',
+      ME: '/auth/me'
+    },
     MAX_CHARS: 4000,
     TYPING_SIMULATION_MS: 900,      // only used by the temporary local mock
     MIN_SPLASH_MS: 900,             // minimum time the splash screen stays visible
     STORAGE_KEYS: {
       CHATS: 'aica_chats',
       THEME: 'aica_theme',
-      ACTIVE_CHAT: 'aica_active_chat_id'
+      ACTIVE_CHAT: 'aica_active_chat_id',
+      AUTH_TOKEN: 'aica_auth_token',
+      USER: 'aica_user'
     },
     SUGGESTED_PROMPTS: [
       { title: 'Draft a blog outline', sub: 'Structure a post on any topic', prompt: 'Draft a blog post outline about the benefits of learning full-stack development.' },
@@ -1138,89 +1169,98 @@ html[data-theme="light"] .theme-switch::after{transform:translateX(16px);}
      2. API PLACEHOLDERS
      These are the ONLY functions allowed to talk to a backend.
      UI code never calls fetch() directly — it calls these.
-     Right now they contain a small local mock so the prototype
-     is demoable. Backend team: replace the mock block in each
-     function with a real fetch() to FastAPI / Gemini, keep the
-     function signature and return shape the same.
      ============================================================ */
+  async function apiRequest(path, { method = 'GET', body, auth = true } = {}) {
+    const headers = {};
+    if (body) headers['Content-Type'] = 'application/json';
+    if (auth) {
+      const token = LocalStorageManager.getAuthToken();
+      if (token) headers.Authorization = `Bearer ${token}`;
+    }
+
+    const response = await fetch(`${CONFIG.API_BASE_URL}${path}`, {
+      method,
+      headers,
+      body: body ? JSON.stringify(body) : undefined
+    });
+
+    const text = await response.text();
+    let data = {};
+    if (text) {
+      try {
+        data = JSON.parse(text);
+      } catch (e) {
+        data = { detail: text };
+      }
+    }
+
+    if (!response.ok) {
+      throw new Error(data.detail || data.message || 'Request failed');
+    }
+
+    return data;
+  }
+
   const APIPlaceholders = {
-
-    /**
-     * Send a user message and receive the assistant's reply.
-     * @param {string} message
-     * @param {string} chatId
-     * @returns {Promise<{ text: string }>}
-     */
     async sendMessageToAPI(message, chatId) {
-      // Backend team will connect FastAPI here.
-      // Call REST API here, e.g.:
-      //   const res = await fetch(`${CONFIG.API_BASE_URL}${CONFIG.ENDPOINTS.SEND_MESSAGE}`, {
-      //     method: 'POST',
-      //     headers: { 'Content-Type': 'application/json' },
-      //     body: JSON.stringify({ chatId, message })
-      //   });
-      //   const data = await res.json();
-      //   return { text: data.reply };
-      // Receive Gemini response here and return it in the same shape.
-
-      // ---- TEMPORARY LOCAL MOCK (remove once backend is connected) ----
-      await Utils.delay(CONFIG.TYPING_SIMULATION_MS + Math.random() * 700);
-      return { text: Utils.mockAssistantReply(message) };
+      try {
+        const data = await apiRequest(CONFIG.ENDPOINTS.SEND_MESSAGE, {
+          method: 'POST',
+          body: { chatId, message }
+        });
+        return { text: data.reply };
+      } catch (err) {
+        console.error('sendMessageToAPI failed', err);
+        throw err;
+      }
     },
 
-    /**
-     * Create a new chat on the backend and return its identifying data.
-     * @returns {Promise<{ id: string, title: string, createdAt: string }>}
-     */
     async createChat() {
-      // Backend team will connect FastAPI here.
-      // Call REST API here to persist a new chat record server-side.
+      if (!LocalStorageManager.getAuthToken()) {
+        return {
+          id: Utils.generateId(),
+          title: 'New chat',
+          createdAt: new Date().toISOString()
+        };
+      }
 
-      // ---- TEMPORARY LOCAL MOCK (remove once backend is connected) ----
-      return {
-        id: Utils.generateId(),
-        title: 'New chat',
-        createdAt: new Date().toISOString()
-      };
+      const data = await apiRequest(CONFIG.ENDPOINTS.CREATE_CHAT, { method: 'POST' });
+      return data;
     },
 
-    /**
-     * Load the list of chats belonging to the current user.
-     * @returns {Promise<Array>}
-     */
     async loadChats() {
-      // Backend team will connect FastAPI here.
-      // Call REST API here to fetch the user's chat list + messages.
+      if (!LocalStorageManager.getAuthToken()) {
+        return LocalStorageManager.getChats();
+      }
 
-      // ---- TEMPORARY LOCAL MOCK (remove once backend is connected) ----
-      return LocalStorageManager.getChats();
+      try {
+        return await apiRequest(CONFIG.ENDPOINTS.LOAD_CHATS);
+      } catch (err) {
+        console.warn('Falling back to local chats', err);
+        return LocalStorageManager.getChats();
+      }
     },
 
-    /**
-     * Delete a chat by id.
-     * @param {string} id
-     * @returns {Promise<{ success: boolean }>}
-     */
     async deleteChat(id) {
-      // Backend team will connect FastAPI here.
-      // Call REST API here to delete the chat record server-side.
+      if (!LocalStorageManager.getAuthToken()) {
+        return { success: true };
+      }
 
-      // ---- TEMPORARY LOCAL MOCK (remove once backend is connected) ----
-      return { success: true };
+      return apiRequest(CONFIG.ENDPOINTS.DELETE_CHAT, {
+        method: 'POST',
+        body: { id }
+      });
     },
 
-    /**
-     * Rename a chat.
-     * @param {string} id
-     * @param {string} name
-     * @returns {Promise<{ success: boolean }>}
-     */
     async renameChat(id, name) {
-      // Backend team will connect FastAPI here.
-      // Call REST API here to update the chat title server-side.
+      if (!LocalStorageManager.getAuthToken()) {
+        return { success: true };
+      }
 
-      // ---- TEMPORARY LOCAL MOCK (remove once backend is connected) ----
-      return { success: true };
+      return apiRequest(CONFIG.ENDPOINTS.RENAME_CHAT, {
+        method: 'POST',
+        body: { id, name }
+      });
     }
   };
 
@@ -1253,6 +1293,25 @@ html[data-theme="light"] .theme-switch::after{transform:translateX(16px);}
       if (id) localStorage.setItem(CONFIG.STORAGE_KEYS.ACTIVE_CHAT, id);
       else localStorage.removeItem(CONFIG.STORAGE_KEYS.ACTIVE_CHAT);
     },
+    getAuthToken() {
+      return localStorage.getItem(CONFIG.STORAGE_KEYS.AUTH_TOKEN);
+    },
+    setAuthToken(token) {
+      if (token) localStorage.setItem(CONFIG.STORAGE_KEYS.AUTH_TOKEN, token);
+      else localStorage.removeItem(CONFIG.STORAGE_KEYS.AUTH_TOKEN);
+    },
+    getUser() {
+      try {
+        const raw = localStorage.getItem(CONFIG.STORAGE_KEYS.USER);
+        return raw ? JSON.parse(raw) : null;
+      } catch (e) {
+        return null;
+      }
+    },
+    setUser(user) {
+      if (user) localStorage.setItem(CONFIG.STORAGE_KEYS.USER, JSON.stringify(user));
+      else localStorage.removeItem(CONFIG.STORAGE_KEYS.USER);
+    },
     getTheme() {
       return localStorage.getItem(CONFIG.STORAGE_KEYS.THEME);
     },
@@ -1262,7 +1321,70 @@ html[data-theme="light"] .theme-switch::after{transform:translateX(16px);}
   };
 
   /* ============================================================
-     4. UTILITY FUNCTIONS
+     4. AUTH MANAGER
+     ============================================================ */
+  const AuthManager = {
+    currentUser: null,
+
+    async login(email, password) {
+      const data = await apiRequest(CONFIG.AUTH_ENDPOINTS.LOGIN, {
+        method: 'POST',
+        body: { email, password }
+      });
+      LocalStorageManager.setAuthToken(data.access_token);
+      await this.loadProfile();
+      return this.currentUser;
+    },
+
+    async register(name, email, password) {
+      const data = await apiRequest(CONFIG.AUTH_ENDPOINTS.REGISTER, {
+        method: 'POST',
+        body: { name, email, password }
+      });
+      LocalStorageManager.setAuthToken(data.access_token);
+      await this.loadProfile();
+      return this.currentUser;
+    },
+
+    async loadProfile() {
+      try {
+        const user = await apiRequest(CONFIG.AUTH_ENDPOINTS.ME);
+        this.currentUser = user;
+        LocalStorageManager.setUser(user);
+        return user;
+      } catch (err) {
+        this.currentUser = null;
+        LocalStorageManager.setAuthToken(null);
+        LocalStorageManager.setUser(null);
+        throw err;
+      }
+    },
+
+    async restoreSession() {
+      const token = LocalStorageManager.getAuthToken();
+      if (!token) {
+        this.currentUser = LocalStorageManager.getUser();
+        return this.currentUser;
+      }
+
+      try {
+        await this.loadProfile();
+        return this.currentUser;
+      } catch (err) {
+        this.currentUser = null;
+        return null;
+      }
+    },
+
+    logout() {
+      this.currentUser = null;
+      LocalStorageManager.setAuthToken(null);
+      LocalStorageManager.setUser(null);
+    }
+  };
+
+  /* ============================================================
+     5. UTILITY FUNCTIONS
      ============================================================ */
   const Utils = {
     generateId() {
@@ -1308,7 +1430,7 @@ html[data-theme="light"] .theme-switch::after{transform:translateX(16px);}
   };
 
   /* ============================================================
-     5. CHAT MANAGER
+     6. CHAT MANAGER
      Owns in-memory chat state and orchestrates persistence +
      API placeholder calls. UI code should only ever talk to
      ChatManager, never to storage or the API layer directly.
@@ -1468,7 +1590,7 @@ html[data-theme="light"] .theme-switch::after{transform:translateX(16px);}
   };
 
   /* ============================================================
-     6. THEME MANAGER
+     7. THEME MANAGER
      ============================================================ */
   const ThemeManager = {
     current: 'dark',
@@ -1492,7 +1614,7 @@ html[data-theme="light"] .theme-switch::after{transform:translateX(16px);}
   };
 
   /* ============================================================
-     7. UI MANAGER
+     8. UI MANAGER
      All DOM rendering lives here. Nothing in here touches
      storage or the API layer directly — it receives data and
      renders it, or forwards user intent up to ChatManager.
@@ -1503,6 +1625,7 @@ html[data-theme="light"] .theme-switch::after{transform:translateX(16px);}
     pendingDeleteChatId: null,
     pendingDeleteMessage: null,
     pendingRenameChatId: null,
+    authMode: 'login',
 
     // Small inline icon set reused across pin / favorite controls.
     ICONS: {
@@ -1526,6 +1649,20 @@ html[data-theme="light"] .theme-switch::after{transform:translateX(16px);}
         settingsThemeToggle: document.getElementById('settingsThemeToggle'),
         settingsBtn: document.getElementById('settingsBtn'),
         userProfileBtn: document.getElementById('userProfileBtn'),
+        userName: document.querySelector('#userProfileBtn .user-name'),
+        userRole: document.querySelector('#userProfileBtn .user-role'),
+
+        authModalOverlay: document.getElementById('authModalOverlay'),
+        authModalTitle: document.getElementById('authModalTitle'),
+        authModalSubtitle: document.getElementById('authModalSubtitle'),
+        authNameRow: document.getElementById('authNameRow'),
+        authNameInput: document.getElementById('authNameInput'),
+        authEmailInput: document.getElementById('authEmailInput'),
+        authPasswordInput: document.getElementById('authPasswordInput'),
+        authMessage: document.getElementById('authMessage'),
+        authCancelBtn: document.getElementById('authCancelBtn'),
+        authSubmitBtn: document.getElementById('authSubmitBtn'),
+        authModeToggleBtn: document.getElementById('authModeToggleBtn'),
 
         chatTopbarTitle: document.getElementById('chatTopbarTitle'),
         chatTopbarSub: document.getElementById('chatTopbarSub'),
@@ -1832,6 +1969,41 @@ html[data-theme="light"] .theme-switch::after{transform:translateX(16px);}
     },
 
     /* ---------- Toasts ---------- */
+    updateUserProfile() {
+      const user = AuthManager.currentUser;
+      if (!this.els.userName || !this.els.userRole) return;
+      if (user) {
+        this.els.userName.textContent = user.name || 'Signed in';
+        this.els.userRole.textContent = user.plan || 'Active account';
+      } else {
+        this.els.userName.textContent = 'Sign in';
+        this.els.userRole.textContent = 'Connect to backend';
+      }
+    },
+
+    renderAuthForm() {
+      const isRegister = this.authMode === 'register';
+      this.els.authNameRow.style.display = isRegister ? 'block' : 'none';
+      this.els.authModalTitle.textContent = isRegister ? 'Create account' : 'Sign in';
+      this.els.authModalSubtitle.textContent = isRegister
+        ? 'Create an account to sync chats with the backend.'
+        : 'Sign in to sync chats and messages.';
+      this.els.authSubmitBtn.textContent = isRegister ? 'Create account' : 'Sign in';
+      this.els.authModeToggleBtn.textContent = isRegister
+        ? 'Already have an account? Sign in'
+        : 'Create an account';
+      this.els.authMessage.textContent = '';
+      this.els.authNameInput.value = '';
+      this.els.authEmailInput.value = '';
+      this.els.authPasswordInput.value = '';
+    },
+
+    setAuthMessage(message, type) {
+      if (!this.els.authMessage) return;
+      this.els.authMessage.textContent = message;
+      this.els.authMessage.style.color = type === 'error' ? 'var(--danger)' : 'var(--text-secondary)';
+    },
+
     showToast(message, type) {
       type = type || 'success';
       const toast = document.createElement('div');
@@ -1865,7 +2037,7 @@ html[data-theme="light"] .theme-switch::after{transform:translateX(16px);}
   };
 
   /* ============================================================
-     8. EVENT HANDLERS
+     9. EVENT HANDLERS
      Bridges user intent (clicks, keys) to ChatManager + UIManager.
      ============================================================ */
   const EventHandlers = {
@@ -2049,6 +2221,54 @@ html[data-theme="light"] .theme-switch::after{transform:translateX(16px);}
       UIManager.showToast('Voice input is coming soon', 'success');
     },
 
+    async handleAuthSubmit() {
+      const email = UIManager.els.authEmailInput.value.trim();
+      const password = UIManager.els.authPasswordInput.value;
+      const name = UIManager.els.authNameInput.value.trim();
+
+      if (!email || !password) {
+        UIManager.setAuthMessage('Please enter your email and password.', 'error');
+        return;
+      }
+
+      if (UIManager.authMode === 'register' && !name) {
+        UIManager.setAuthMessage('Please enter your name.', 'error');
+        return;
+      }
+
+      UIManager.setAuthMessage('Working...', 'info');
+      try {
+        if (UIManager.authMode === 'register') {
+          await AuthManager.register(name, email, password);
+        } else {
+          await AuthManager.login(email, password);
+        }
+        UIManager.updateUserProfile();
+        await ChatManager.init();
+        UIManager.renderChatHistory();
+        UIManager.renderConversation();
+        UIManager.closeModal(UIManager.els.authModalOverlay);
+        UIManager.showToast(UIManager.authMode === 'register' ? 'Account created' : 'Signed in', 'success');
+      } catch (err) {
+        UIManager.setAuthMessage(err.message || 'Authentication failed.', 'error');
+      }
+    },
+
+    toggleAuthMode() {
+      UIManager.authMode = UIManager.authMode === 'login' ? 'register' : 'login';
+      UIManager.renderAuthForm();
+    },
+
+    handleProfileClick() {
+      if (AuthManager.currentUser) {
+        UIManager.showToast(`Signed in as ${AuthManager.currentUser.name}`, 'success');
+        return;
+      }
+      UIManager.renderAuthForm();
+      UIManager.openModal(UIManager.els.authModalOverlay);
+      setTimeout(() => UIManager.els.authEmailInput.focus(), 50);
+    },
+
     handleThemeToggle() {
       ThemeManager.toggle();
     },
@@ -2063,7 +2283,7 @@ html[data-theme="light"] .theme-switch::after{transform:translateX(16px);}
   };
 
   /* ============================================================
-     9. CHAT FLOW
+     10. CHAT FLOW
      Small orchestration layer: shows typing indicator while
      waiting on the (placeholder) API call, then renders the reply.
      ============================================================ */
@@ -2085,7 +2305,7 @@ html[data-theme="light"] .theme-switch::after{transform:translateX(16px);}
   };
 
   /* ============================================================
-     10. EVENT LISTENERS
+     11. EVENT LISTENERS
      Wires up all static DOM elements once at startup.
      ============================================================ */
   function bindEventListeners() {
@@ -2137,10 +2357,22 @@ html[data-theme="light"] .theme-switch::after{transform:translateX(16px);}
     els.settingsCloseBtn.addEventListener('click', () => UIManager.closeModal(els.settingsModalOverlay));
     els.clearAllChatsBtn.addEventListener('click', EventHandlers.handleClearAllChats);
 
-    // User profile (UI only)
-    els.userProfileBtn.addEventListener('click', () => {
-      UIManager.showToast('Profile settings are coming soon', 'success');
+    // Auth modal
+    els.authCancelBtn.addEventListener('click', () => UIManager.closeModal(els.authModalOverlay));
+    els.authSubmitBtn.addEventListener('click', EventHandlers.handleAuthSubmit);
+    els.authModeToggleBtn.addEventListener('click', EventHandlers.toggleAuthMode);
+    els.authPasswordInput.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') EventHandlers.handleAuthSubmit();
     });
+    els.authEmailInput.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') EventHandlers.handleAuthSubmit();
+    });
+    els.authNameInput.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') EventHandlers.handleAuthSubmit();
+    });
+
+    // User profile
+    els.userProfileBtn.addEventListener('click', EventHandlers.handleProfileClick);
 
     // Rename modal
     els.renameCancelBtn.addEventListener('click', () => UIManager.closeModal(els.renameModalOverlay));
@@ -2158,7 +2390,7 @@ html[data-theme="light"] .theme-switch::after{transform:translateX(16px);}
     els.deleteMsgConfirmBtn.addEventListener('click', EventHandlers.handleDeleteMessageConfirm);
 
     // Close modals on overlay click
-    [els.renameModalOverlay, els.deleteModalOverlay, els.deleteMsgModalOverlay, els.settingsModalOverlay].forEach(overlay => {
+    [els.authModalOverlay, els.renameModalOverlay, els.deleteModalOverlay, els.deleteMsgModalOverlay, els.settingsModalOverlay].forEach(overlay => {
       overlay.addEventListener('click', (e) => {
         if (e.target === overlay) UIManager.closeModal(overlay);
       });
@@ -2183,14 +2415,14 @@ html[data-theme="light"] .theme-switch::after{transform:translateX(16px);}
     // Escape key closes any open modal / mobile sidebar
     document.addEventListener('keydown', (e) => {
       if (e.key !== 'Escape') return;
-      [els.renameModalOverlay, els.deleteModalOverlay, els.deleteMsgModalOverlay, els.settingsModalOverlay]
+      [els.authModalOverlay, els.renameModalOverlay, els.deleteModalOverlay, els.deleteMsgModalOverlay, els.settingsModalOverlay]
         .forEach(o => UIManager.closeModal(o));
       UIManager.closeSidebar();
     });
   }
 
   /* ============================================================
-     11. SPLASH SCREEN
+     12. SPLASH SCREEN
      ============================================================ */
   const SplashScreen = {
     startedAt: 0,
@@ -2210,13 +2442,22 @@ html[data-theme="light"] .theme-switch::after{transform:translateX(16px);}
   };
 
   /* ============================================================
-     12. INIT
+     13. INIT
      ============================================================ */
   async function init() {
     SplashScreen.start();
     ThemeManager.init();
     UIManager.cacheEls();
     bindEventListeners();
+    UIManager.renderAuthForm();
+    UIManager.updateUserProfile();
+
+    try {
+      await AuthManager.restoreSession();
+      UIManager.updateUserProfile();
+    } catch (err) {
+      console.warn('No saved session', err);
+    }
 
     await ChatManager.init();
 

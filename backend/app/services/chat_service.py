@@ -3,7 +3,7 @@ from uuid import uuid4
 
 from fastapi import HTTPException, status
 
-from app.database import db
+from app import database
 from app.services.gemini_service import generate_reply
 
 
@@ -32,7 +32,7 @@ def _serialize_chat(doc: dict) -> dict:
 
 def _check_database():
     """Ensure the database connection is available."""
-    if db is None:
+    if database.db is None:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Database connection is unavailable.",
@@ -57,7 +57,7 @@ async def create_chat(user_id: str) -> dict:
         "messages": [],
     }
 
-    await db.chats.insert_one(doc)
+    await database.db.chats.insert_one(doc)
 
     return {
         "id": chat_id,
@@ -70,7 +70,7 @@ async def list_chats(user_id: str) -> list[dict]:
     """Return all chats for a user."""
     _check_database()
 
-    cursor = db.chats.find(
+    cursor = database.db.chats.find(
         {"user_id": user_id}
     ).sort("updated_at", -1)
 
@@ -85,7 +85,7 @@ async def rename_chat(
     """Rename a chat."""
     _check_database()
 
-    result = await db.chats.update_one(
+    result = await database.db.chats.update_one(
         {
             "_id": chat_id,
             "user_id": user_id,
@@ -112,7 +112,7 @@ async def delete_chat(
     """Delete a chat."""
     _check_database()
 
-    result = await db.chats.delete_one(
+    result = await database.db.chats.delete_one(
         {
             "_id": chat_id,
             "user_id": user_id,
@@ -134,7 +134,7 @@ async def send_message(
     """Send a message and receive an AI-generated reply."""
     _check_database()
 
-    chat = await db.chats.find_one(
+    chat = await database.db.chats.find_one(
         {
             "_id": chat_id,
             "user_id": user_id,
@@ -199,7 +199,7 @@ async def send_message(
 
         update["$set"]["title"] = title
 
-    await db.chats.update_one(
+    await database.db.chats.update_one(
         {
             "_id": chat_id,
             "user_id": user_id,

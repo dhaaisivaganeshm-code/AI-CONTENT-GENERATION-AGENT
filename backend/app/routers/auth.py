@@ -2,7 +2,7 @@ from uuid import uuid4
 
 from fastapi import APIRouter, Depends, HTTPException, status
 
-from app.database import db
+from app import database
 from app.dependencies import get_current_user
 from app.schemas.auth import (
     LoginRequest,
@@ -17,13 +17,15 @@ from app.utils.security import (
 )
 
 router = APIRouter(
-    prefix="/auth",
     tags=["Authentication"],
 )
 
+DEFAULT_PLAN = "Free plan"
 
-def _check_database():
-    if db is None:
+
+def check_database() -> None:
+    """Ensure the database connection is available."""
+    if database.db is None:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Database connection unavailable.",
@@ -35,16 +37,20 @@ def _check_database():
     response_model=TokenResponse,
     status_code=status.HTTP_201_CREATED,
 )
-async def register(body: RegisterRequest):
-    _check_database()
+async def register(
+    request: RegisterRequest,
+) -> TokenResponse:
+    """Register a new user."""
 
-    email = body.email.lower().strip()
+    check_database()
 
-    existing = await db.users.find_one(
+    email = request.email.lower().strip()
+
+    existing_user = await database.db.users.find_one(
         {"email": email}
     )
 
-    if existing:
+    if existing_user:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Email already registered.",
@@ -52,13 +58,13 @@ async def register(body: RegisterRequest):
 
     user_id = f"user_{uuid4().hex[:12]}"
 
-    await db.users.insert_one(
+    await database.db.users.insert_one(
         {
             "_id": user_id,
-            "name": body.name.strip(),
+            "name": request.name.strip(),
             "email": email,
-            "password_hash": hash_password(body.password),
-            "plan": "Free plan",
+            "password_hash": hash_password(request.password),
+            "plan": DEFAULT_PLAN,
         }
     )
 
@@ -71,19 +77,23 @@ async def register(body: RegisterRequest):
     "/login",
     response_model=TokenResponse,
 )
-async def login(body: LoginRequest):
-    _check_database()
+async def login(
+    request: LoginRequest,
+) -> TokenResponse:
+    """Authenticate a user and return a JWT access token."""
 
-    email = body.email.lower().strip()
+    check_database()
 
-    user = await db.users.find_one(
+    email = request.email.lower().strip()
+
+    user = await database.db.users.find_one(
         {"email": email}
     )
 
     if (
-        not user
+        user is None
         or not verify_password(
-            body.password,
+            request.password,
             user["password_hash"],
         )
     ):
@@ -104,11 +114,13 @@ async def login(body: LoginRequest):
     response_model=UserResponse,
 )
 async def me(
-    user=Depends(get_current_user),
-):
+    current_user: dict = Depends(get_current_user),
+) -> UserResponse:
+    """Return the authenticated user's profile."""
+
     return UserResponse(
-        id=user["_id"],
-        name=user["name"],
-        email=user["email"],
-        plan=user.get("plan", "Free plan"),
+        id=current_user["_id"],
+        name=current_user["name"],
+        email=current_user["email"],
+        plan=current_user.get("plan", DEFAULT_PLAN),
     )

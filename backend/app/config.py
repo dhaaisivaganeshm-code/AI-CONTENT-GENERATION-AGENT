@@ -1,18 +1,42 @@
+from functools import cached_property
+
+from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
 class Settings(BaseSettings):
-    mongodb_url: str = "mongodb://localhost:27017"
-    mongodb_db: str = "ai_content_assistant"
+    """Application configuration."""
 
+    # ==========================
+    # MongoDB
+    # ==========================
+    mongodb_url: str = Field(default="mongodb://localhost:27017")
+    mongodb_db: str = Field(default="ai_content_assistant")
+
+    # ==========================
+    # JWT
+    # ==========================
     jwt_secret: str
-    jwt_algorithm: str = "HS256"
-    access_token_expire_minutes: int = 1440
+    jwt_algorithm: str = Field(default="HS256")
+    access_token_expire_minutes: int = Field(default=1440)
 
-    gemini_api_key: str
-    gemini_model: str = "gemini-2.0-flash"
+    # ==========================
+    # AI
+    # ==========================
+    ai_provider: str = Field(default="groq")
+    ai_api_key: str = Field(default="")
+    ai_model: str = Field(default="llama-3.3-70b-versatile")
 
-    cors_origins: str = "*"
+    # ==========================
+    # CORS
+    # ==========================
+    cors_origins: str = Field(
+        default="http://localhost:5500,http://127.0.0.1:5500"
+    )
+
+    @cached_property
+    def cors_origin_list(self):
+        return [origin.strip() for origin in self.cors_origins.split(",")]
 
     model_config = SettingsConfigDict(
         env_file=".env",

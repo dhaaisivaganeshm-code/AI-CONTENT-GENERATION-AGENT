@@ -1,3 +1,4 @@
+import logging
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
@@ -8,56 +9,79 @@ from app.database import connect_db, close_db
 from app.routers import auth, chat
 
 
+logging.basicConfig(
+    level=logging.INFO,
+)
+
+logger = logging.getLogger(__name__)
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    """
+    Application startup and shutdown events.
+    """
 
     # Startup
+    logger.info("Starting AI Content Assistant API...")
+
     await connect_db()
 
     yield
 
     # Shutdown
+    logger.info("Shutting down API...")
+
     await close_db()
+
 
 
 app = FastAPI(
     title="AI Content Assistant API",
+    description="AI powered content generation backend",
     version="1.0.0",
-    lifespan=lifespan
+    lifespan=lifespan,
 )
 
-
-origins = [
-    origin.strip()
-    for origin in settings.cors_origins.split(",")
-]
 
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=origins,
+    allow_origins=settings.cors_origin_list,
+    allow_origin_regex=r".*",
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
 
-# Routes
+
+# ==========================
+# API Routes
+# ==========================
 
 app.include_router(
     auth.router,
-    prefix="/api"
+    prefix="/api/auth",
+    tags=["Authentication"],
 )
+
 
 app.include_router(
     chat.router,
-    prefix="/api"
+    prefix="/api/chat",
+    tags=["Chat"],
 )
 
 
-@app.get("/api/health")
-async def health():
+
+@app.get(
+    "/api/health",
+    tags=["Health"],
+)
+async def health_check():
+
     return {
-        "status": "ok",
-        "message": "AI Content Assistant API running"
+        "status": "healthy",
+        "service": "AI Content Assistant API",
     }

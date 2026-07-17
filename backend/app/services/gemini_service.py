@@ -1,57 +1,73 @@
-import google.generativeai as genai
+import logging
+
+from groq import Groq
 
 from app.config import settings
 
-
-genai.configure(api_key=settings.gemini_api_key)
-
-model = genai.GenerativeModel(
-    model_name=settings.gemini_model
-)
-
+logger = logging.getLogger(__name__)
 
 SYSTEM_PROMPT = """
-You are an AI Content Assistant.
+You are AI Content Assistant.
 
-You help users:
-- Write blogs
-- Rewrite text
-- Generate emails
-- Summarize content
-- Brainstorm ideas
-- Improve grammar
+Your responsibilities include:
+- Writing blogs
+- Writing articles
+- Rewriting text
+- Summarizing
+- Drafting emails
+- Brainstorming
+- Grammar correction
+- Professional writing
 
-Always provide clear, concise, professional responses.
+Always provide detailed and accurate responses.
 """
+
+client = Groq(api_key=settings.ai_api_key)
 
 
 async def generate_reply(
     history: list[dict],
     user_message: str,
 ) -> str:
+    """
+    Generate AI response using Groq.
+    """
 
     try:
-        chat = model.start_chat(history=[])
+        messages = [
+            {
+                "role": "system",
+                "content": SYSTEM_PROMPT,
+            }
+        ]
 
-        for message in history:
-            chat.send_message(
-                message["content"]
-            )
+        # Add previous conversation
+        for chat in history:
+            if "role" in chat and "content" in chat:
+                messages.append(
+                    {
+                        "role": chat["role"],
+                        "content": chat["content"],
+                    }
+                )
 
-        response = chat.send_message(
-            f"{SYSTEM_PROMPT}\n\n{user_message}",
-            generation_config={
-                "temperature": 0.7,
-                "top_p": 0.9,
-                "max_output_tokens": 1024,
-            },
+        # Current user message
+        messages.append(
+            {
+                "role": "user",
+                "content": user_message,
+            }
         )
 
-        return response.text.strip()
+        response = client.chat.completions.create(
+            model=settings.ai_model,
+            messages=messages,
+            temperature=0.7,
+            max_completion_tokens=1024,
+        )
+
+        return response.choices[0].message.content.strip()
 
     except Exception as e:
-        print(f"Gemini Error: {e}")
-        return (
-            "Sorry, I couldn't generate a response "
-            "at the moment. Please try again."
-        )
+        logger.exception(e)
+        return f"Groq Error: {str(e)}"
